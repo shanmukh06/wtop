@@ -9,3 +9,4 @@ as CPU Usage, RAM usage, Disk Usage etc.
 * Linux
 ## Modules Used
 psutil
+wmi
