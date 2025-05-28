@@ -8,5 +8,5 @@ as CPU Usage, RAM usage, Disk Usage etc.
 * Windows
 * Linux
 ## Modules Used
-psutil
-wmi
+* psutil
+* wmi
