@@ -1,3 +1,4 @@
+from rich.columns import Columns
 from rich.console import Group
 from rich.layout import Layout
 from rich.panel import Panel
@@ -34,10 +35,17 @@ def mem_info():
 
 def disk_management():
     disk_info = psutil.disk_partitions()
+    disk_data = {}
     for disk in disk_info:
         global disk_data_info
-        disk_data_info = psutil.disk_usage(disk.device)
-    return {'total_disk' : disk_data_info.total,'used_disk' : disk_data_info.used,'free_disk' : disk_data_info.free}
+        disk_data_info = psutil.disk_usage(disk.mountpoint)
+        disk_data[disk.device] = {
+            'mount_point' : disk.mountpoint,
+            'total_disk' : disk_data_info.total,
+            'used_disk' : disk_data_info.used,
+            'free_disk' : disk_data_info.free,
+            }
+    return disk_data
 
 def ui_layout():
     header = Layout(name="header")
@@ -59,6 +67,7 @@ def ui_layout():
         )
 
         mem_data = mem_info()
+        header["Middle"].size = 7
         total = mem_data.get('total_mem')
         used = mem_data.get('used_mem')
         avail = mem_data.get('avail_mem')
@@ -75,9 +84,31 @@ def ui_layout():
         )
         return header
 
+    def disk_ui():
+        disk_info = disk_management()
+        all_panels = []
+        for drive, info in disk_info.items():
+            used_percent = (info['used_disk']/info['total_disk'])*100
+            disk_panel_content = Group(
+                f"Drive: {info['mount_point']}",
+                f"Total: {data_unit_converter(info['total_disk'])}",
+                f"Used: {data_unit_converter(info['used_disk'])}",
+                f"Free: {data_unit_converter(info['free_disk'])}",
+                ProgressBar(total=100, completed=used_percent)
+            )
+            all_panels.append(Panel(disk_panel_content, width=30, padding=(0,1)))
+        disk_panel = Panel(
+            Columns(all_panels, expand=True, equal=False),
+            title='Disk Info',
+            title_align='left'
+        )
+        header['Lower'].update(disk_panel)
+
+
     with Live(header, refresh_per_second=4) as live:
         while True:
             memory()
+            disk_ui()
             time.sleep(0.4)
 
 
