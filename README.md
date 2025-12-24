@@ -22,15 +22,20 @@
 * **[keyboard](https://github.com/boppreh/keyboard):** Non-blocking hotkey detection for logging.
 
 ## 📥 Installation & Usage
-1. **Clone the repository and install dependencies:**
+1. **Install dependencies:**
+   Ensure you have a `requirements.txt` file in your directory, then run:
+   ```bash
+   pip install -r requirements.txt
+   ```
+2. **Clone the repository and install dependencies:**
    ```bash
    pip install rich psutil py-cpuinfo gputil pyamdgpuinfo keyboard
     ```
-2. **Run the Application**
+3. **Run the Application**
     ```bash
    python wtop.py
    ```
-3. Hotkeys:
+4. Hotkeys:
 
 * `S`: Export current system stats to a JSON log.
 * `Ctrl+C`: Exit the application.
