@@ -4,113 +4,118 @@ from rich.layout import Layout
 from rich.panel import Panel
 from rich.live import Live
 from rich.progress_bar import ProgressBar
+from datetime import datetime
 import time
 import psutil
 import cpuinfo
-import wmi
+import json
+import GPUtil
+import keyboard  # Used for non-blocking key detection
 
+# 1. DATA GATHERING FUNCTIONS
 def data_unit_converter(data: float) -> str:
-    if (data/(1024**3)) >= 1000:
-        return f'{data/(1024**4):.2f} TB'
-    elif (data/(1024**2)) >= 1000:
-        return f'{data/(1024**3):.2f} GB'
-    elif (data/(1024**1)) >= 1000:
-        return f'{data/(1024**2):.2f} MB'
+    if (data / (1024 ** 3)) >= 1000:
+        return f'{data / (1024 ** 4):.2f} TB'
+    elif (data / (1024 ** 2)) >= 1000:
+        return f'{data / (1024 ** 3):.2f} GB'
+    elif (data / (1024 ** 1)) >= 1000:
+        return f'{data / (1024 ** 2):.2f} MB'
     else:
-        return f'{data/1024:.2f} KB'
+        return f'{data / 1024:.2f} KB'
 
-def cpu_info():
-      cpu_info_dict = cpuinfo.get_cpu_info()
+def cpu_static_info():
+    info = cpuinfo.get_cpu_info()
+    return {
+        'Name': info.get("brand_raw", "Unknown CPU"),
+        'L_Proc': psutil.cpu_count(),
+        'Cores': psutil.cpu_count(logical=False),
+        'Arch': info.get("arch", "Unknown")
+    }
 
-      return {'CPU_Name' : cpu_info_dict["brand_raw"],
-              'Logical Processors': psutil.cpu_count(), 'Cores': psutil.cpu_count(logical=False),
-              'Architecture': cpu_info_dict["arch"], 'Base Clock': cpu_info_dict["hz_advertised_friendly"]}
+try:
+    import pyamdgpuinfo
+except ImportError:
+    pyamdgpuinfo = None
 
-def mem_info():
-      mem = psutil.virtual_memory()
-      swap_mem = psutil.swap_memory()
-      return {'total_swap': swap_mem.total, 'used_swap': swap_mem.used,
-             'free_swap': swap_mem.free, 'avail_mem': mem.available,
-             'total_mem': mem.total, 'used_mem': mem.used, 'mem_percent':mem.percent}
+def get_gpu_info():
+    gpu_text = []
+    # NVIDIA Check
+    try:
+        for gpu in GPUtil.getGPUs():
+            gpu_text.append(f"NV {gpu.name}: {gpu.load*100:.1f}% | {gpu.temperature}C")
+    except: pass
+    # AMD Check
+    if pyamdgpuinfo:
+        try:
+            for i in range(pyamdgpuinfo.get_gpu_count()):
+                gpu = pyamdgpuinfo.get_gpu(i)
+                gpu_text.append(f"AMD {gpu.name}: {gpu.query_load()}%")
+        except: pass
+    return gpu_text if gpu_text else ["No Dedicated GPU"]
 
-def disk_management():
-    disk_info = psutil.disk_partitions()
-    disk_data = {}
-    for disk in disk_info:
-        global disk_data_info
-        disk_data_info = psutil.disk_usage(disk.mountpoint)
-        disk_data[disk.device] = {
-            'mount_point' : disk.mountpoint,
-            'total_disk' : disk_data_info.total,
-            'used_disk' : disk_data_info.used,
-            'free_disk' : disk_data_info.free,
-            }
-    return disk_data
+# 2. LOGGING FUNCTION
+def save_log(cpu, mem, disk, gpu):
+    timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    log_data = {
+        "timestamp": timestamp,
+        "cpu_usage": cpu,
+        "memory": mem,
+        "disks": disk,
+        "gpu": gpu
+    }
+    filename = f"wtop_log_{timestamp}.json"
+    with open(filename, 'w') as f:
+        json.dump(log_data, f, indent=4)
+    return filename
 
+# 3. UI LAYOUT & MAIN LOOP
 def ui_layout():
     header = Layout(name="header")
     header.split_column(
-        Layout(name="upper"),
-        Layout(name="Middle"),
-        Layout(name="Lower")
+        Layout(name="top_row", size=10),
+        Layout(name="bottom_row", ratio=1)
     )
+    header["top_row"].split_row(Layout(name="upper"), Layout(name="Middle"))
+    header["bottom_row"].split_row(Layout(name="disk_box", ratio=2), Layout(name="gpu_box", ratio=1))
 
-    def memory():
-        data = cpu_info()
-        header["upper"].size = 6
-        header["upper"].update(Panel(
-            (f"Logical Processors: {data.get('Logical Processors')}\nCores:{data.get('Cores')}"
-             f"\nArchitecture: {data.get('Architecture')}\nBase Clock: {data.get('Base Clock')}"),
-            title=data.get('CPU_Name'),
-            title_align="left"
-        )
-        )
+    static_cpu = cpu_static_info()
+    last_log_msg = ""
 
-        mem_data = mem_info()
-        header["Middle"].size = 7
-        total = mem_data.get('total_mem')
-        used = mem_data.get('used_mem')
-        avail = mem_data.get('avail_mem')
-
-        memory_panel_content = Group(
-            f"Total Memory: {data_unit_converter(total)}",
-            f"Available Memory: {data_unit_converter(avail)}",
-            f"Used Memory: {data_unit_converter(used)}",
-            ProgressBar(total=100, completed=(used / total) * 100)
-        )
-
-        header['Middle'].update(
-            Panel(memory_panel_content, title="Memory", title_align="left")
-        )
-        return header
-
-    def disk_ui():
-        disk_info = disk_management()
-        all_panels = []
-        for drive, info in disk_info.items():
-            used_percent = (info['used_disk']/info['total_disk'])*100
-            disk_panel_content = Group(
-                f"Drive: {info['mount_point']}",
-                f"Total: {data_unit_converter(info['total_disk'])}",
-                f"Used: {data_unit_converter(info['used_disk'])}",
-                f"Free: {data_unit_converter(info['free_disk'])}",
-                ProgressBar(total=100, completed=used_percent)
-            )
-            all_panels.append(Panel(disk_panel_content, width=30, padding=(0,1)))
-        disk_panel = Panel(
-            Columns(all_panels, expand=True, equal=False),
-            title='Disk Info',
-            title_align='left'
-        )
-        header['Lower'].update(disk_panel)
-
-
-    with Live(header, refresh_per_second=4) as live:
+    with Live(header, refresh_per_second=4, screen=True) as live:
         while True:
-            memory()
-            disk_ui()
-            time.sleep(0.4)
+            # --- CPU ---
+            cpu_usage = psutil.cpu_percent()
+            cpu_content = f"L. Proc: {static_cpu['L_Proc']}\nCores: {static_cpu['Cores']}\nArch: {static_cpu['Arch']}\nUsage: [bold cyan]{cpu_usage}%[/bold cyan]"
+            header["upper"].update(Panel(cpu_content, title=static_cpu['Name'], expand=True))
 
+            # --- Memory ---
+            m = psutil.virtual_memory()
+            mem_content = Group(f"Total: {data_unit_converter(m.total)}", f"Used:  {data_unit_converter(m.used)}", ProgressBar(total=100, completed=m.percent))
+            header["Middle"].update(Panel(mem_content, title="Memory", expand=True))
+
+            # --- Disks ---
+            drive_panels = []
+            disk_stats = {}
+            for part in psutil.disk_partitions():
+                try:
+                    usage = psutil.disk_usage(part.mountpoint)
+                    if usage.total == 0: continue
+                    d_content = Group(f"Drive: {part.mountpoint}", f"Used: {data_unit_converter(usage.used)}", ProgressBar(total=100, completed=usage.percent))
+                    drive_panels.append(Panel(d_content, expand=True))
+                    disk_stats[part.mountpoint] = usage.percent
+                except: continue
+            header["disk_box"].update(Panel(Columns(drive_panels, equal=True, expand=True), title="Storage"))
+
+            # --- GPU & Logging ---
+            gpu_list = get_gpu_info()
+            if keyboard.is_pressed('s'):
+                fname = save_log(cpu_usage, m.percent, disk_stats, gpu_list)
+                last_log_msg = f"[bold green]Saved: {fname}[/bold green]"
+
+            gpu_content = "\n".join(gpu_list) + f"\n\n{last_log_msg}\n[dim]Press 'S' to Log[/dim]"
+            header["gpu_box"].update(Panel(gpu_content, title="GPU & Status", expand=True))
+
+            time.sleep(0.4)
 
 if __name__ == '__main__':
     ui_layout()
